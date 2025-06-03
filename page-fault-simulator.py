@@ -5,49 +5,91 @@ class SimuladorMemoriaVirtualGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Simulador de Page-Fault - Memória Virtual")
+        self.root.geometry("800x600")
+        self.root.configure(bg="#f0f0f0")
 
-        self.memoria_virtual = ["P1", "P2", "P3", "P4", "P5"]
+        self.num_quadros = tk.IntVar(value=3)
+        self.num_paginas = tk.IntVar(value=5)
+
+        self.memoria_virtual = []
         self.memoria_principal = []
-        self.etp = {pagina: None for pagina in self.memoria_virtual}
+        self.etp = {}
         self.fila_substituicao = []
         self.page_faults = 0
 
-        self.num_quadros = tk.IntVar(value=2)
+        self.botoes_paginas = []
 
         self.configurar_interface()
 
     def configurar_interface(self):
-        # Seleção do número de quadros
-        tk.Label(self.root, text="Número de quadros na memória principal:").grid(row=0, column=0, sticky='w')
-        tk.Spinbox(self.root, from_=1, to=10, textvariable=self.num_quadros, width=5,
-                   command=self.reiniciar_simulador).grid(row=0, column=1)
+        fonte_titulo = ("Arial", 14, "bold")
+        fonte_conteudo = ("Arial", 12)
 
-        # Botões das páginas virtuais
-        tk.Label(self.root, text="Memória Virtual (Disco):").grid(row=1, column=0, columnspan=2, sticky='w')
-        for i, pagina in enumerate(self.memoria_virtual):
-            btn = tk.Button(self.root, text=pagina, width=6,
-                            command=lambda p=pagina: self.acessar_pagina(p))
-            btn.grid(row=2, column=i)
+        # Frame superior - configurações
+        frame_config = tk.Frame(self.root, bg="#f0f0f0")
+        frame_config.pack(pady=10)
 
-        # Área de exibição
-        tk.Label(self.root, text="Memória Principal:").grid(row=3, column=0, columnspan=2, sticky='w')
-        self.memoria_label = tk.Label(self.root, text="", fg="blue")
-        self.memoria_label.grid(row=4, column=0, columnspan=5, sticky='w')
+        tk.Label(frame_config, text="Quadros de Memória Principal:", font=fonte_conteudo, bg="#f0f0f0").grid(row=0, column=0, padx=10)
+        tk.Spinbox(frame_config, from_=1, to=10, textvariable=self.num_quadros, width=5,
+                   font=fonte_conteudo, command=self.reiniciar_simulador).grid(row=0, column=1)
 
-        tk.Label(self.root, text="Tabela de Páginas (ETP):").grid(row=5, column=0, columnspan=2, sticky='w')
-        self.etp_label = tk.Label(self.root, text="", justify="left", fg="darkgreen")
-        self.etp_label.grid(row=6, column=0, columnspan=5, sticky='w')
+        tk.Label(frame_config, text="Páginas na Memória Virtual:", font=fonte_conteudo, bg="#f0f0f0").grid(row=0, column=2, padx=10)
+        tk.Spinbox(frame_config, from_=1, to=20, textvariable=self.num_paginas, width=5,
+                   font=fonte_conteudo, command=self.reiniciar_simulador).grid(row=0, column=3)
 
-        self.page_faults_label = tk.Label(self.root, text="Total de Page-Faults: 0", fg="red")
-        self.page_faults_label.grid(row=7, column=0, columnspan=2, sticky='w')
+        # Frame dos botões de páginas
+        self.frame_botoes = tk.Frame(self.root, bg="#f0f0f0")
+        self.frame_botoes.pack(pady=15)
+        self.label_botoes = tk.Label(self.frame_botoes, text="", font=fonte_titulo, bg="#f0f0f0")
+        self.label_botoes.pack(anchor="w")
+
+        # Frame da memória principal
+        frame_memoria = tk.Frame(self.root, bg="#f0f0f0")
+        frame_memoria.pack(pady=10, fill="x")
+        tk.Label(frame_memoria, text="Memória Principal:", font=fonte_titulo, bg="#f0f0f0").pack(anchor="w")
+        self.memoria_label = tk.Label(frame_memoria, text="", fg="blue", font=fonte_conteudo, bg="#f0f0f0")
+        self.memoria_label.pack(anchor="w", padx=10)
+        
+        # Frame da tabela ETP
+        self.frame_etp = tk.Frame(self.root, bg="#f0f0f0")
+        self.frame_etp.pack(pady=10, fill="x")
+        tk.Label(self.frame_etp, text="Tabela de Páginas (ETP):", font=fonte_titulo, bg="#f0f0f0").pack(anchor="w")
+        self.etp_tabela = tk.Frame(self.frame_etp, bg="#ffffff", bd=1, relief="solid")
+        self.etp_tabela.pack(padx=10, pady=5, anchor="w")
+
+        # Frame do contador de page-faults
+        frame_rodape = tk.Frame(self.root, bg="#f0f0f0")
+        frame_rodape.pack(pady=10, fill="x")
+        self.page_faults_label = tk.Label(frame_rodape, text="Total de Page-Faults: 0", fg="red", font=fonte_conteudo, bg="#f0f0f0")
+        self.page_faults_label.pack(anchor="w", padx=10)
+        
+        # Botão Reset
+        btn_reset = tk.Button(frame_config, text="Resetar Simulação", font=fonte_conteudo, bg="#ffcccc", command=self.reiniciar_simulador)
+        btn_reset.grid(row=0, column=4, padx=15)
 
         self.reiniciar_simulador()
 
     def reiniciar_simulador(self):
+        n = self.num_paginas.get()
+        self.memoria_virtual = [f"P{i+1}" for i in range(n)]
         self.memoria_principal = []
         self.etp = {pagina: None for pagina in self.memoria_virtual}
         self.fila_substituicao = []
         self.page_faults = 0
+
+        # Atualiza botões das páginas
+        for btn in self.botoes_paginas:
+            btn.destroy()
+        self.botoes_paginas = []
+
+        self.label_botoes.config(text="Clique para acessar uma página da Memória Virtual:")
+
+        for pagina in self.memoria_virtual:
+            btn = tk.Button(self.frame_botoes, text=pagina, width=6, font=("Arial", 12),
+                            command=lambda p=pagina: self.acessar_pagina(p), bg="#e0e0ff")
+            btn.pack(side=tk.LEFT, padx=5, pady=5)
+            self.botoes_paginas.append(btn)
+
         self.atualizar_interface()
 
     def acessar_pagina(self, pagina):
@@ -72,12 +114,24 @@ class SimuladorMemoriaVirtualGUI:
         self.fila_substituicao.append(pagina)
 
     def atualizar_interface(self):
-        self.memoria_label.config(text=f"{self.memoria_principal}")
-        texto_etp = "\n".join(
-            f"{pagina}: {self.etp[pagina] if self.etp[pagina] is not None else '-'}"
-            for pagina in self.memoria_virtual
-        )
-        self.etp_label.config(text=texto_etp)
+        self.memoria_label.config(text=" | ".join(self.memoria_principal))
+
+        # Limpa a tabela antiga
+        for widget in self.etp_tabela.winfo_children():
+            widget.destroy()
+
+        # Cabeçalho da tabela
+        header_font = ("Arial", 11, "bold")
+        cell_font = ("Arial", 11)
+
+        tk.Label(self.etp_tabela, text="Página", width=15, font=header_font, bg="#d0d0d0", relief="ridge").grid(row=0, column=0)
+        tk.Label(self.etp_tabela, text="Quadro", width=15, font=header_font, bg="#d0d0d0", relief="ridge").grid(row=0, column=1)
+
+        for i, pagina in enumerate(self.memoria_virtual, start=1):
+            quadro = self.etp[pagina] if self.etp[pagina] is not None else "-"
+            tk.Label(self.etp_tabela, text=pagina, width=15, font=cell_font, bg="#f9f9f9", relief="ridge").grid(row=i, column=0)
+            tk.Label(self.etp_tabela, text=quadro, width=15, font=cell_font, bg="#f9f9f9", relief="ridge").grid(row=i, column=1)
+
         self.page_faults_label.config(text=f"Total de Page-Faults: {self.page_faults}")
 
 
