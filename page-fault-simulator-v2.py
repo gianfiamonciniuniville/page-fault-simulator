@@ -1,216 +1,260 @@
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext
+import re
 
-class SimuladorMemoriaVirtual:
+class PageTableEntry:
+    def __init__(self, page_id, frame_id=None, present=False):
+        self.page_id = page_id
+        self.frame_id = frame_id
+        self.present = present
+
+class MemorySimulator:
+    def __init__(self, main_memory_size, virtual_memory_pages):
+        self.main_memory_size = main_memory_size
+        self.main_memory = [None] * main_memory_size  # Represents physical frames
+        self.virtual_memory = virtual_memory_pages  # List of all pages on disk
+        self.page_table = {}
+        self.page_faults = 0
+        self.access_history = []
+
+        # Initialize page table entries for all virtual pages
+        for page in self.virtual_memory:
+            self.page_table[page] = PageTableEntry(page)
+
+    def access_page(self, page_id):
+        result = []
+        result.append(f"Usuário solicita acesso à Página {page_id}:")
+        
+        if page_id not in self.page_table:
+            result.append(f"Erro: Página {page_id} não existe na memória virtual.")
+            return result
+
+        entry = self.page_table[page_id]
+        self.access_history.append(page_id)
+
+        if entry.present:
+            result.append(f"Página {page_id} já está na memória principal (Frame {entry.frame_id}).")
+        else:
+            result.append("Page-fault detectado.")
+            self.page_faults += 1
+
+            # Find a free frame or choose one for replacement
+            free_frame_id = -1
+            for i, frame_content in enumerate(self.main_memory):
+                if frame_content is None:
+                    free_frame_id = i
+                    break
+
+            if free_frame_id != -1:
+                # Page-in: load page to free frame
+                self.main_memory[free_frame_id] = page_id
+                entry.frame_id = free_frame_id
+                entry.present = True
+                result.append(f"Página {page_id} carregada para o Frame {free_frame_id}.")
+            else:
+                # No free frame, implement a simple FIFO replacement
+                # For simplicity, let's replace the page in frame 0 for now
+                # A more robust FIFO would require tracking load order
+                page_to_replace_id = self.main_memory[0]
+                old_entry = self.page_table[page_to_replace_id]
+                old_entry.present = False
+                old_entry.frame_id = None
+
+                self.main_memory[0] = page_id
+                entry.frame_id = 0
+                entry.present = True
+                result.append(f"Memória cheia. Página {page_to_replace_id} substituída pela Página {page_id} no Frame 0.")
+
+        return result
+
+    def get_status(self):
+        status = []
+        status.append("--- Estado Atual ---")
+        status.append(f"Memória Principal (Frames): {self.main_memory}")
+        status.append("Tabela de Páginas (ETP):")
+        for page_id, entry in self.page_table.items():
+            page_status = f"Frame {entry.frame_id}" if entry.present else "-"
+            status.append(f"  Página {page_id}: {page_status}")
+        status.append(f"Área de Memória Virtual (Disco): {self.virtual_memory}")
+        status.append(f"Page Faults: {self.page_faults}")
+        return status
+
+class MemorySimulatorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Simulador de Page-Fault com Memória Virtual")
-        self.root.geometry("900x650")
-        self.root.configure(bg="#eef2f7")
-
-        # Variáveis configuráveis
-        self.num_quadros = tk.IntVar(value=3)
-        self.num_paginas = tk.IntVar(value=7)
-
-        # Estado
-        self.page_faults = 0
-        self.etp = {}
-        self.memoria_principal = []
-        self.memoria_virtual = []
-
-        # Interface
-        self.configurar_interface()
-        self.reiniciar_simulador()
-
-    def configurar_interface(self):
-        fonte_titulo = ("Segoe UI", 16, "bold")
-        fonte_secundaria = ("Segoe UI", 12)
-        fonte_normal = ("Segoe UI", 11)
-
-        # Frame Configurações (topo)
-        frame_config = tk.Frame(self.root, bg="#dbe7f3", bd=1, relief="groove")
-        frame_config.pack(fill="x", padx=15, pady=12)
-
-        tk.Label(frame_config, text="Quadros Memória Principal:", font=fonte_secundaria, bg="#dbe7f3").grid(row=0, column=0, padx=12, pady=6, sticky="w")
-        spin_quadros = tk.Spinbox(frame_config, from_=1, to=10, textvariable=self.num_quadros, width=6, font=fonte_normal, command=self.reiniciar_simulador)
-        spin_quadros.grid(row=0, column=1, pady=6, sticky="w")
-
-        tk.Label(frame_config, text="Páginas Memória Virtual:", font=fonte_secundaria, bg="#dbe7f3").grid(row=0, column=2, padx=12, pady=6, sticky="w")
-        spin_paginas = tk.Spinbox(frame_config, from_=1, to=20, textvariable=self.num_paginas, width=6, font=fonte_normal, command=self.reiniciar_simulador)
-        spin_paginas.grid(row=0, column=3, pady=6, sticky="w")
-
-        btn_reset = tk.Button(frame_config, text="Resetar Simulação", font=fonte_secundaria, bg="#f28c8c", fg="#5a1a1a",
-                              activebackground="#e35050", activeforeground="#3b0b0b", relief="raised", command=self.reiniciar_simulador)
-        btn_reset.grid(row=0, column=4, padx=20, pady=6, sticky="w")
-        btn_reset.bind("<Enter>", lambda e: btn_reset.config(bg="#e35050"))
-        btn_reset.bind("<Leave>", lambda e: btn_reset.config(bg="#f28c8c"))
-
-        # Frame Memória Virtual e Principal lado a lado
-        frame_memorias = tk.Frame(self.root, bg="#eef2f7")
-        frame_memorias.pack(fill="x", padx=15)
-
-        # Memória Virtual (Disco)
-        frame_virtual = tk.Frame(frame_memorias, bg="#f4f7fb", bd=1, relief="sunken")
-        frame_virtual.pack(side="left", fill="both", expand=True, padx=(0,10), pady=10)
-
-        lbl_virtual = tk.Label(frame_virtual, text="Memória Virtual (Disco)", font=fonte_titulo, bg="#f4f7fb", fg="#303f60")
-        lbl_virtual.pack(anchor="nw", padx=8, pady=6)
-
-        self.listbox_virtual = tk.Listbox(frame_virtual, font=fonte_normal, height=10, activestyle="none", selectbackground="#aaccee", selectforeground="#000000")
-        self.listbox_virtual.pack(fill="both", expand=True, padx=10, pady=(0,10))
-
+        self.root.title("Simulador de Gerenciamento de Memória Virtual")
+        self.root.geometry("800x600")
+        self.root.resizable(True, True)
+        
+        self.simulator = None
+        self.create_widgets()
+        
+    def create_widgets(self):
+        # Frame para configuração
+        config_frame = ttk.LabelFrame(self.root, text="Configuração")
+        config_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Número de quadros
+        ttk.Label(config_frame, text="Número de quadros da memória principal:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.frames_entry = ttk.Entry(config_frame, width=10)
+        self.frames_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.frames_entry.insert(0, "3")
+        
+        # Páginas da memória virtual
+        ttk.Label(config_frame, text="Páginas da memória virtual (separadas por vírgula):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.pages_entry = ttk.Entry(config_frame, width=30)
+        self.pages_entry.grid(row=1, column=1, padx=5, pady=5, columnspan=2)
+        self.pages_entry.insert(0, "P1,P2,P3,P4,P5")
+        
+        # Botão para inicializar o simulador
+        self.init_button = ttk.Button(config_frame, text="Inicializar Simulador", command=self.initialize_simulator)
+        self.init_button.grid(row=2, column=0, padx=5, pady=5)
+        
+        # Botão para resetar o simulador
+        self.reset_button = ttk.Button(config_frame, text="Resetar Simulador", command=self.reset_simulator, state="disabled")
+        self.reset_button.grid(row=2, column=1, padx=5, pady=5)
+        
+        # Frame para acesso a páginas
+        access_frame = ttk.LabelFrame(self.root, text="Acesso a Páginas")
+        access_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Combobox para selecionar página
+        ttk.Label(access_frame, text="Selecione uma página para acessar:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.page_combobox = ttk.Combobox(access_frame, width=10, state="disabled")
+        self.page_combobox.grid(row=0, column=1, padx=5, pady=5)
+        
         # Botão para acessar página
-        self.btn_acessar = tk.Button(frame_virtual, text="Acessar Página Selecionada", font=fonte_secundaria,
-                                    bg="#6190e8", fg="white", relief="raised", command=self.acessar_pagina, state="disabled")
-        self.btn_acessar.pack(padx=10, pady=(0,15))
-        self.btn_acessar.bind("<Enter>", lambda e: self.btn_acessar.config(bg="#3a68d4"))
-        self.btn_acessar.bind("<Leave>", lambda e: self.btn_acessar.config(bg="#6190e8"))
-
-        self.listbox_virtual.bind('<<ListboxSelect>>', self.habilitar_botao_acessar)
-
-        # Memória Principal
-        frame_principal = tk.Frame(frame_memorias, bg="#f4f7fb", bd=1, relief="sunken")
-        frame_principal.pack(side="left", fill="both", expand=True, pady=10)
-
-        lbl_principal = tk.Label(frame_principal, text="Memória Principal (RAM)", font=fonte_titulo, bg="#f4f7fb", fg="#303f60")
-        lbl_principal.pack(anchor="nw", padx=8, pady=6)
-
-        self.memoria_label = tk.Label(frame_principal, text="", font=("Segoe UI", 13, "bold"), bg="#ffffff", fg="#1f2f3f",
-                                     relief="solid", bd=1, width=25, height=2)
-        self.memoria_label.pack(padx=10, pady=(0,15))
-
-        # Frame Tabela ETP
-        self.frame_etp = tk.Frame(self.root, bg="#eef2f7")
-        self.frame_etp.pack(fill="x", padx=15, pady=(0,15))
-        tk.Label(self.frame_etp, text="Tabela de Páginas (ETP):", font=fonte_titulo, bg="#eef2f7", fg="#303f60").pack(anchor="w", padx=5)
-
-        self.etp_tabela = tk.Frame(self.frame_etp, bg="#ffffff", bd=1, relief="solid")
-        self.etp_tabela.pack(padx=10, pady=8, anchor="w")
-
-        # Frame Estatísticas e Histórico
-        frame_stats_hist = tk.Frame(self.root, bg="#eef2f7")
-        frame_stats_hist.pack(fill="both", expand=True, padx=15, pady=(0, 15))
-
-        # Estatísticas
-        frame_stats = tk.Frame(frame_stats_hist, bg="#dbe7f3", bd=1, relief="groove")
-        frame_stats.pack(side="left", fill="both", expand=False, padx=(0, 10), pady=5)
-
-        tk.Label(frame_stats, text="Estatísticas", font=fonte_titulo, bg="#dbe7f3", fg="#303f60").pack(padx=10, pady=10)
-        self.page_faults_label = tk.Label(frame_stats, text="Total de Page-Faults: 0", font=fonte_secundaria, bg="#dbe7f3", fg="#202830")
-        self.page_faults_label.pack(padx=15, pady=10)
-
-        # Histórico de acessos
-        frame_hist = tk.Frame(frame_stats_hist, bg="#f4f7fb", bd=1, relief="sunken")
-        frame_hist.pack(side="left", fill="both", expand=True, pady=5)
-
-        tk.Label(frame_hist, text="Histórico de Acessos", font=fonte_secundaria, bg="#f4f7fb", fg="#303f60").pack(anchor="nw", padx=10, pady=8)
-        self.hist_text = scrolledtext.ScrolledText(frame_hist, font=fonte_normal, bg="white", fg="#1f2f3f", height=12, state="disabled", relief="solid", bd=1)
-        self.hist_text.pack(fill="both", expand=True, padx=10, pady=(0,10))
-
-    def reiniciar_simulador(self):
-        # Inicializa estado
-        self.page_faults = 0
-        self.etp.clear()
-        self.memoria_principal.clear()
-        self.memoria_virtual.clear()
-
-        # Popula a memória virtual e quadro físico
-        total_paginas = self.num_paginas.get()
-        total_quadros = self.num_quadros.get()
-
-        for i in range(1, total_paginas + 1):
-            pagina = f"P{i}"
-            self.memoria_virtual.append(pagina)
-            self.etp[pagina] = None
-
-        # Carrega os primeiros quadros possíveis na memória principal
-        for i in range(min(total_quadros, total_paginas)):
-            pagina = self.memoria_virtual[i]
-            self.memoria_principal.append(pagina)
-            self.etp[pagina] = f"Quadro {i}"
-
-        self.atualizar_interface()
-        self.hist_text.config(state="normal")
-        self.hist_text.delete("1.0", tk.END)
-        self.hist_text.config(state="disabled")
-
-    def acessar_pagina(self):
-        selecao = self.listbox_virtual.curselection()
-        if not selecao:
-            messagebox.showwarning("Aviso", "Selecione uma página na Memória Virtual.")
+        self.access_button = ttk.Button(access_frame, text="Acessar Página", command=self.access_page, state="disabled")
+        self.access_button.grid(row=0, column=2, padx=5, pady=5)
+        
+        # Frame para exibição do estado
+        status_frame = ttk.LabelFrame(self.root, text="Estado do Sistema")
+        status_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Área de texto para exibir o estado
+        self.status_text = scrolledtext.ScrolledText(status_frame, wrap=tk.WORD, width=80, height=20)
+        self.status_text.pack(fill="both", expand=True, padx=5, pady=5)
+        self.status_text.config(state="disabled")
+        
+        # Frame para estatísticas
+        stats_frame = ttk.LabelFrame(self.root, text="Estatísticas")
+        stats_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Label para exibir o número de page faults
+        ttk.Label(stats_frame, text="Page Faults:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.page_faults_var = tk.StringVar(value="0")
+        ttk.Label(stats_frame, textvariable=self.page_faults_var).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        
+        # Label para exibir o histórico de acessos
+        ttk.Label(stats_frame, text="Histórico de Acessos:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.access_history_var = tk.StringVar(value="")
+        ttk.Label(stats_frame, textvariable=self.access_history_var).grid(row=1, column=1, padx=5, pady=5, sticky="w")
+    
+    def initialize_simulator(self):
+        try:
+            main_memory_size = int(self.frames_entry.get())
+            if main_memory_size <= 0:
+                raise ValueError("O número de quadros deve ser um inteiro positivo.")
+                
+            virtual_memory_input = self.pages_entry.get()
+            if not virtual_memory_input.strip():
+                raise ValueError("A lista de páginas não pode estar vazia.")
+                
+            virtual_memory_pages = [p.strip() for p in virtual_memory_input.split(',')]
+            
+            # Validar nomes de páginas (apenas letras, números e underscore)
+            for page in virtual_memory_pages:
+                if not re.match(r'^[a-zA-Z0-9_]+$', page):
+                    raise ValueError(f"Nome de página inválido: {page}. Use apenas letras, números e underscore.")
+            
+            # Verificar páginas duplicadas
+            if len(virtual_memory_pages) != len(set(virtual_memory_pages)):
+                raise ValueError("Existem páginas duplicadas na lista.")
+            
+            self.simulator = MemorySimulator(main_memory_size, virtual_memory_pages)
+            
+            # Atualizar combobox com as páginas disponíveis
+            self.page_combobox['values'] = virtual_memory_pages
+            self.page_combobox.current(0)
+            self.page_combobox['state'] = 'readonly'
+            
+            # Habilitar botões de acesso e reset
+            self.access_button['state'] = 'normal'
+            self.reset_button['state'] = 'normal'
+            
+            # Desabilitar botão de inicialização e campos de configuração
+            self.init_button['state'] = 'disabled'
+            self.frames_entry['state'] = 'disabled'
+            self.pages_entry['state'] = 'disabled'
+            
+            # Exibir estado inicial
+            self.update_status("Simulador inicializado com sucesso!")
+            self.update_status_display(self.simulator.get_status())
+            
+        except ValueError as e:
+            messagebox.showerror("Erro", str(e))
+    
+    def reset_simulator(self):
+        # Limpar o simulador
+        self.simulator = None
+        
+        # Reabilitar campos de configuração e botão de inicialização
+        self.frames_entry['state'] = 'normal'
+        self.pages_entry['state'] = 'normal'
+        self.init_button['state'] = 'normal'
+        
+        # Desabilitar botões de acesso e reset
+        self.page_combobox['state'] = 'disabled'
+        self.access_button['state'] = 'disabled'
+        self.reset_button['state'] = 'disabled'
+        
+        # Limpar estatísticas
+        self.page_faults_var.set("0")
+        self.access_history_var.set("")
+        
+        # Limpar área de status
+        self.status_text.config(state="normal")
+        self.status_text.delete(1.0, tk.END)
+        self.status_text.insert(tk.END, "Simulador resetado. Configure novos parâmetros e clique em 'Inicializar Simulador'.\n")
+        self.status_text.config(state="disabled")
+    
+    def access_page(self):
+        if not self.simulator:
+            messagebox.showerror("Erro", "O simulador não foi inicializado.")
             return
-
-        pagina = self.listbox_virtual.get(selecao[0])
-
-        if pagina in self.memoria_principal:
-            self.adicionar_historico(f"Acesso à página {pagina}: já está na memória principal.")
-        else:
-            self.page_faults += 1
-            self.adicionar_historico(f"Page-fault ao acessar {pagina}. Página será carregada.")
-
-            # Se tem espaço livre
-            if len(self.memoria_principal) < self.num_quadros.get():
-                frame_livre = len(self.memoria_principal)
-                self.memoria_principal.append(pagina)
-                self.etp[pagina] = f"Quadro {frame_livre}"
-                self.adicionar_historico(f"Página {pagina} carregada no Quadro {frame_livre} (espaço livre).")
-            else:
-                # Substituir (FIFO simples: substitui o primeiro)
-                substituida = self.memoria_principal.pop(0)
-                quadro_substituido = self.etp[substituida]
-                self.etp[substituida] = None
-                self.memoria_principal.append(pagina)
-                self.etp[pagina] = quadro_substituido
-                self.adicionar_historico(f"Substituiu página {substituida} do {quadro_substituido} pela página {pagina}.")
-
-        self.atualizar_interface()
-
-    def adicionar_historico(self, texto):
-        self.hist_text.config(state="normal")
-        self.hist_text.insert(tk.END, texto + "\n")
-        self.hist_text.see(tk.END)
-        self.hist_text.config(state="disabled")
-
-    def atualizar_interface(self):
-        # Atualiza memória principal
-        memoria_texto = " | ".join(self.memoria_principal) if self.memoria_principal else "Memória vazia"
-        self.memoria_label.config(text=memoria_texto)
-
-        # Atualiza tabela ETP
-        for widget in self.etp_tabela.winfo_children():
-            widget.destroy()
-
-        header_font = ("Segoe UI", 12, "bold")
-        cell_font = ("Segoe UI", 11)
-
-        tk.Label(self.etp_tabela, text="Página", width=15, font=header_font, bg="#c4d1e8", relief="ridge").grid(row=0, column=0, sticky="nsew")
-        tk.Label(self.etp_tabela, text="Quadro", width=15, font=header_font, bg="#c4d1e8", relief="ridge").grid(row=0, column=1, sticky="nsew")
-
-        for i, pagina in enumerate(self.memoria_virtual, start=1):
-            quadro = self.etp[pagina] if self.etp[pagina] is not None else "-"
-            bg_color = "#e9efff" if self.etp[pagina] is not None else "#f9f9f9"
-            tk.Label(self.etp_tabela, text=pagina, width=15, font=cell_font, bg=bg_color, relief="ridge").grid(row=i, column=0, sticky="nsew")
-            tk.Label(self.etp_tabela, text=quadro, width=15, font=cell_font, bg=bg_color, relief="ridge").grid(row=i, column=1, sticky="nsew")
-
-        # Atualiza contador de page-faults
-        self.page_faults_label.config(text=f"Total de Page-Faults: {self.page_faults}")
-
-        # Atualiza listbox da memória virtual
-        self.listbox_virtual.delete(0, tk.END)
-        for pagina in self.memoria_virtual:
-            self.listbox_virtual.insert(tk.END, pagina)
-
-        # Desabilita botão de acessar página até que uma página seja selecionada
-        self.btn_acessar.config(state="disabled")
-
-    def habilitar_botao_acessar(self, event):
-        if self.listbox_virtual.curselection():
-            self.btn_acessar.config(state="normal")
-        else:
-            self.btn_acessar.config(state="disabled")
-
+            
+        page_id = self.page_combobox.get()
+        if not page_id:
+            messagebox.showerror("Erro", "Selecione uma página para acessar.")
+            return
+            
+        # Acessar a página e obter o resultado
+        result = self.simulator.access_page(page_id)
+        
+        # Atualizar a exibição do estado
+        self.update_status_display(result)
+        self.update_status_display(self.simulator.get_status())
+        
+        # Atualizar estatísticas
+        self.page_faults_var.set(str(self.simulator.page_faults))
+        self.access_history_var.set(", ".join(self.simulator.access_history))
+    
+    def update_status(self, message):
+        self.status_text.config(state="normal")
+        self.status_text.insert(tk.END, message + "\n")
+        self.status_text.see(tk.END)
+        self.status_text.config(state="disabled")
+    
+    def update_status_display(self, status_list):
+        self.status_text.config(state="normal")
+        for line in status_list:
+            self.status_text.insert(tk.END, line + "\n")
+        self.status_text.insert(tk.END, "\n")
+        self.status_text.see(tk.END)
+        self.status_text.config(state="disabled")
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = SimuladorMemoriaVirtual(root)
+    app = MemorySimulatorGUI(root)
     root.mainloop()
+
