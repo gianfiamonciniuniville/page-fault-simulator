@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import re
+import time
 
 class PageTableEntry:
     def __init__(self, page_id, frame_id=None, present=False):
@@ -118,14 +119,23 @@ class MemorySimulatorGUI:
         access_frame = ttk.LabelFrame(self.root, text="Acesso a Páginas")
         access_frame.pack(fill="x", padx=10, pady=10)
         
-        # Combobox para selecionar página
-        ttk.Label(access_frame, text="Selecione uma página para acessar:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        # Acesso individual
+        ttk.Label(access_frame, text="Acesso Individual:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         self.page_combobox = ttk.Combobox(access_frame, width=10, state="disabled")
         self.page_combobox.grid(row=0, column=1, padx=5, pady=5)
         
         # Botão para acessar página
         self.access_button = ttk.Button(access_frame, text="Acessar Página", command=self.access_page, state="disabled")
         self.access_button.grid(row=0, column=2, padx=5, pady=5)
+        
+        # Lista de acessos
+        ttk.Label(access_frame, text="Lista de Acessos (separados por vírgula):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.access_list_entry = ttk.Entry(access_frame, width=30, state="disabled")
+        self.access_list_entry.grid(row=1, column=1, padx=5, pady=5, columnspan=2)
+        
+        # Botão para executar lista de acessos
+        self.batch_button = ttk.Button(access_frame, text="Executar Lista de Acessos", command=self.execute_access_list, state="disabled")
+        self.batch_button.grid(row=2, column=1, padx=5, pady=5)
         
         # Frame para exibição do estado
         status_frame = ttk.LabelFrame(self.root, text="Estado do Sistema")
@@ -178,9 +188,11 @@ class MemorySimulatorGUI:
             self.page_combobox.current(0)
             self.page_combobox['state'] = 'readonly'
             
-            # Habilitar botões de acesso e reset
+            # Habilitar botões e campos
             self.access_button['state'] = 'normal'
             self.reset_button['state'] = 'normal'
+            self.access_list_entry['state'] = 'normal'
+            self.batch_button['state'] = 'normal'
             
             # Desabilitar botão de inicialização e campos de configuração
             self.init_button['state'] = 'disabled'
@@ -207,6 +219,8 @@ class MemorySimulatorGUI:
         self.page_combobox['state'] = 'disabled'
         self.access_button['state'] = 'disabled'
         self.reset_button['state'] = 'disabled'
+        self.access_list_entry['state'] = 'disabled'
+        self.batch_button['state'] = 'disabled'
         
         # Limpar estatísticas
         self.page_faults_var.set("0")
@@ -238,6 +252,57 @@ class MemorySimulatorGUI:
         # Atualizar estatísticas
         self.page_faults_var.set(str(self.simulator.page_faults))
         self.access_history_var.set(", ".join(self.simulator.access_history))
+    
+    def execute_access_list(self):
+        if not self.simulator:
+            messagebox.showerror("Erro", "O simulador não foi inicializado.")
+            return
+            
+        access_list_input = self.access_list_entry.get()
+        if not access_list_input.strip():
+            messagebox.showerror("Erro", "A lista de acessos não pode estar vazia.")
+            return
+            
+        access_list = [p.strip() for p in access_list_input.split(',')]
+        
+        # Validar páginas na lista de acessos
+        invalid_pages = [page for page in access_list if page not in self.simulator.virtual_memory]
+        if invalid_pages:
+            messagebox.showerror("Erro", f"As seguintes páginas não existem na memória virtual: {', '.join(invalid_pages)}")
+            return
+        
+        # Desabilitar botões durante a execução
+        self.access_button['state'] = 'disabled'
+        self.batch_button['state'] = 'disabled'
+        self.reset_button['state'] = 'disabled'
+        
+        # Exibir mensagem de início da execução em lote
+        self.update_status(f"\n--- Iniciando execução da lista de acessos: {', '.join(access_list)} ---\n")
+        
+        # Processar cada página na lista
+        for page_id in access_list:
+            # Acessar a página e obter o resultado
+            result = self.simulator.access_page(page_id)
+            
+            # Atualizar a exibição do estado
+            self.update_status_display(result)
+            
+            # Atualizar estatísticas
+            self.page_faults_var.set(str(self.simulator.page_faults))
+            self.access_history_var.set(", ".join(self.simulator.access_history))
+            
+            # Atualizar a interface para mostrar cada passo
+            self.root.update()
+            time.sleep(0.5)  # Pequena pausa para visualizar cada passo
+        
+        # Exibir estado final após todos os acessos
+        self.update_status("\n--- Execução da lista de acessos concluída ---")
+        self.update_status_display(self.simulator.get_status())
+        
+        # Reabilitar botões após a execução
+        self.access_button['state'] = 'normal'
+        self.batch_button['state'] = 'normal'
+        self.reset_button['state'] = 'normal'
     
     def update_status(self, message):
         self.status_text.config(state="normal")
